@@ -1,0 +1,319 @@
+---
+title: "TEER96 Analysis"
+output: html_document
+---
+
+```{r}
+#################
+# Load Packages #
+#################
+
+# to install - install.packages("name")
+
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(readxl)
+
+```
+
+```{r}
+#########################
+# Load and Process Data #
+#########################
+
+# Before loading data, delete all rows above and below the TEER data
+## The first row of the imported data should be well names
+
+# This code removes resistance and calculates normalized TEER
+
+# Load TEER96 Data (edited csv output)
+df <- read.csv("file_path") %>%
+  
+  # Select only TEER - change columns selected if not using all 96 wells
+  select(-98:-194) %>%
+  
+  # Rename Column
+  rename(Time = Time.hrs.) %>%
+  
+  # Lenghthen Data
+  melt(id.vars = c("Time"),
+             variable.name = "Well",
+             value.name = "TEER") %>% 
+  
+  # Calculate Normalized TEER
+  group_by(Well) %>% 
+  mutate(n_TEER = TEER / TEER[1]) %>% 
+  
+  # Optional: remove data after a certain time 
+  filter(Time < 123)
+
+# If a compound is applied at a certain concentration
+df$concentration <- 123
+
+
+# Load Plate Map - include any information, as long as one column is titled "Well"
+plate_map <- read_excel("file_path")
+
+# Merge TEER and Plate Map
+df1 <- merge(df1, plate_map, by = Well)
+
+# If multiple concentrations of a compound applied - purely to help plot later on
+df1$line_id <- paste(df1$Well, df1$concentration)
+df1$conc_uM <- paste(df1$concentration, "uM")
+
+# If samples run in duplicate, and wish to calculate averages
+df2 <- df1 %>% group_by(Time, sample_ID, concentration) %>% 
+  summarize(avg_TEER = mean(TEER), 
+            norm_avg_TEER = mean(normalized_TEER))
+df2$line_id <- paste(df2$sample_ID, df2$concentration)
+df2$conc_uM <- paste(df2$concentration, "uM")
+
+```
+
+```{r}
+######################
+# Summary Statistics #
+######################
+
+# This Code chunk is a function that creates a dataframe with summary statistics
+
+# Create blank data frame
+stats <- data.frame("Z", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+names(stats) <- c("line_id", "max", "min", "max_min_teer", "max_min_time", "t0_teer", "t0_min_teer", "max_time", "min_time", "max_final_teer", "min_final", "max_final_time", "min_final_time", "rate_t0_min", "rate_min_max", "rate_min_final", "decline_percent", "final_teer", "recovery")
+
+# Function for well-by-well analysis
+stat.well <- function(x = df1) {
+  
+  # Vector of group names to loop over
+  well <- unique(df1$line_id)
+  
+  for (i in seq_along(well)) {
+    
+    # subset into a single well
+    single_well <- df1 %>% subset(line_id == well [i])
+    
+    # Maximum TEER
+    a <- max(single_well$TEER)
+    b <- which.max(single_well$TEER)
+    
+    # Minimum TEER
+    c <- min(single_well$TEER)
+    d <- which.min(single_well$TEER)
+    
+    # Max - min
+    e <- a - c
+    
+    # Time between max and min
+    f <- single_well[c(b,d),]
+    g <- diff(f$Time)
+    
+    # TEER difference t0 to min
+    h <- single_well[single_well$Time <= 0.000001, "TEER"]
+    w <- h - c
+    
+    # Time of max value
+    j <- single_well[c(b), "Time"]
+    k <- as.data.frame(j)
+    
+    # Time of max value
+    l <- single_well[c(d), "Time"]
+    m <- as.data.frame(l)
+    
+    # Difference between max and final
+    n <- nrow(single_well)
+    o <- single_well[c(b,n),]
+    p <- diff(o$TEER)
+    
+    # Difference between min and final
+    q <- single_well[c(d,n),]
+    r <- diff(q$TEER)
+    
+    # Time between max and final
+    s <- diff(o$Time)
+    
+    # Time between min and final
+    t <- diff(q$Time)
+    
+    # Average rate t0 to min
+    u <- (c - h) / m
+    
+    # Average rate min to max
+    v <- (a - c) / (k - m)
+    
+    # Average rate min to final
+    y <- r / diff(q$Time)
+    
+    # Percent Decline
+    z <- (1 - (c / h))*100
+    
+    # Final TEER
+    aa <- single_well[c(n),]$TEER
+    
+    # Percent Recovery
+    bb <- ((aa / c) - 1)*100
+    
+    # Make data frame
+    stat <- data.frame(paste0(well[i]), a, c, e, g, h, w, k, m, p, r, s, t, u, v, y, z, aa, bb)
+    
+    # Add stats to data frame
+    stats[nrow(stats) +1,] <- stat
+    
+  }
+
+  return(stats)
+    
+}
+
+df3 <- stat.well()
+summary_stats <- df3 %>% subset(line_id != "Z")
+summary_stats <- summary_stats %>% separate(line_id, into = c("Well", "concentration"), sep = " ")
+summary_stats <- merge(summary_stats, plate_map, by = "Well")
+summary_stats$line_id <- paste(summary_stats$Well, summary_stats$concentration)
+summary_stats$conc_uM <- paste(summary_stats$concentration, "uM")
+
+```
+
+```{r}
+###################################
+# Summary Statistics - Normalized #
+###################################
+
+# Create blank data frame
+stats <- data.frame("Z", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+names(stats) <- c("line_id", "n_max", "n_min", "n_max_min_teer", "n_max_min_time", "n_t0_teer", "n_t0_min_teer", "n_max_time", "n_min_time", "n_max_final_teer", "n_min_final", "n_max_final_time", "n_min_final_time", "n_rate_t0_min", "n_rate_min_max", "n_rate_min_final", "n_decline_percent", "n_final_teer", "n_recovery")
+
+# Function for well-by-well analysis
+stat.well <- function(x = df1) {
+  
+  # Vector of names of wells to loop over
+  well <- unique(df1$line_id)
+  
+  for(i in seq_along(well)) {
+    
+    # subset data into a single well
+    single_well <- df1 %>% subset(line_id == well [i])
+    
+    # Maximum TEER
+    a <- max(single_well$n_TEER)
+    b <- which.max(single_well$n_TEER)
+    
+    # Minimum TEER
+    c <- min(single_well$n_TEER)
+    d <- which.min(single_well$n_TEER)
+    
+    # Max - min
+    e <- a - c
+    
+    # Time between max and min
+    f <- single_well[c(b,d),]
+    g <- diff(f$Time)
+    
+    # Normalized TEER difference t0 to min
+    h <- single_well[single_well$Time <= 0.000001, "n_TEER"]
+    w <- h - c
+    
+    # Time of max value
+    j <- single_well[c(b), "Time"]
+    k <- as.data.frame(j)
+    
+    # Time of min value
+    l <- single_well[c(d), "Time"]
+    m <- as.data.frame(l)
+    
+    # Difference between max and final
+    n <- nrow(single_well)
+    o <- single_well[c(b,n),]
+    p <- diff(o$n_TEER)
+    
+    # Difference between min and final
+    q <- single_well[c(d,n),]
+    r <- diff(q$n_TEER)
+    
+    # Time between max and final
+    s <- diff(o$Time)
+    
+    # Time between min and final
+    t <- diff(q$Time)
+    
+    # Average rate t0 to min
+    u <- (c - h) / m
+    
+    # Average rate min to max
+    v <- (a - c) / (k - m)
+    
+    # Average rate min to final
+    y <- r / diff(q$Time)
+    
+    # Percent Decline
+    z <- (1 - (c / h))*100
+    
+    # Final TEER
+    aa <- single_well[c(n),]$n_TEER
+    
+    # Percent Recovery
+    bb <- ((aa / c) - 1)*100
+    
+    # Make data frame
+    stat <- data.frame(paste0(well[i]), a, c, e, g, h, w, k, m, p, r, s, t, u, v, y, z, aa, bb)
+    
+    # Add stats to data frame
+    stats[nrow(stats) +1,] <- stat
+    
+  }
+
+  return(stats)
+    
+}
+
+df4 <- stat.well()
+n_summary_stats <- df4 %>% subset(line_id != "Z")
+n_summary_stats <- n_summary_stats %>% separate(line_id, into = c("Well", "concentration"), sep = " ")
+n_summary_stats <- merge(n_summary_stats, plate_map, by = "Well")
+n_summary_stats$line_id <- paste(n_summary_stats$Well, n_summary_stats$concentration)
+n_summary_stats$conc_uM <- paste(n_summary_stats$concentration, "uM")
+
+```
+
+```{r}
+#################################################### 
+# Plot TEER by Sample ID ### Can also plot by well #
+####################################################
+
+# Create vector for function to loop over
+SampleID <- plate_map %>% select(c(sample_ID)) %>% unique %>% rename(ID = sample_ID)
+
+# Function for plotting TEER or normalized TEER by Sample ID
+plot.sample <- function(x = df1) {
+  
+  # Vector of sample names
+  SID <- unique(sampleID$ID)
+  
+  # Loop to Plot Graphs
+  for (i in seq_along(SID)) {
+    
+    plot <- x %>%
+      
+      # Subset by ID
+      subset(sample_ID = SID[i]) %>% 
+      
+      # Plot - customize as you would any ggplot
+      ggplot(aes(x = Time, y = TEER, group = line_id, color = conc_uM)) + 
+      geom_line() + 
+      theme_classic + 
+      labs(x = "Time", 
+           y = "TEER"
+           title = paste0(SID[i]))
+    
+    # Print each plot to screen
+    print(plot)
+    
+  }
+  
+}
+
+plot.sample()
+
+```
+
